@@ -18,8 +18,8 @@ class DocEEMetric(BasicMetric):
         self.event_role_index_to_relation = preparer.event_role_index_to_relation
         self.seq_BIO_index_to_tag = preparer.seq_BIO_index_to_tag
         self.event_schema = preparer.SCHEMA
-        self.event_null_type_index = preparer.event_type_type_to_index['Null']
-        self.event_null_relation_index = preparer.event_role_relation_to_index['Null']
+        self.event_null_type_index = preparer.event_type_type_to_index['Null'] # null在事件类型中的序号 0
+        self.event_null_relation_index = preparer.event_role_relation_to_index['Null'] # null在field中的序号 0
 
     def the_score_fn(self, results: List[dict]):
         # loss

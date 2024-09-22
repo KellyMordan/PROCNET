@@ -1,4 +1,4 @@
-# Document-Level Multi-Event Extraction with Event Proxy Nodes and Hausdorff Distance Minimization
+conda# Document-Level Multi-Event Extraction with Event Proxy Nodes and Hausdorff Distance Minimization
 
 Code for the paper: 
 ["Document-Level Multi-Event Extraction with Event Proxy Nodes and Hausdorff Distance Minimization"](https://aclanthology.org/2023.acl-long.563.pdf)

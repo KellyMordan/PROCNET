@@ -29,8 +29,8 @@ class DocEEProcessor(BasicProcessor):
         self.dev_docs: List[DocEEDocumentExample] = self.parse_json_all(self.dev_json)
         self.test_docs: List[DocEEDocumentExample] = self.parse_json_all(self.test_json)
 
-        self.SCHEMA = DocEELabel.EVENT_SCHEMA
-        self.SCHEMA_KEY_ENG_CHN = DocEELabel.KEY_ENG_CHN
+        self.SCHEMA = DocEELabel.EVENT_SCHEMA #五种事件类型及filed
+        self.SCHEMA_KEY_ENG_CHN = DocEELabel.KEY_ENG_CHN #中英文转换
         self.SCHEMA_KEY_CHN_ENG = DocEELabel.KEY_CHN_ENG
         if read_pseudo_dataset:
             self.SCHEMA = PseudoDocEELabel.EVENT_SCHEMA
@@ -38,12 +38,12 @@ class DocEEProcessor(BasicProcessor):
             self.SCHEMA_KEY_CHN_ENG = PseudoDocEELabel.KEY_CHN_ENG
 
     def parse_json_one(self, json) -> DocEEDocumentExample:
-        doc_id: str = json[0]
-        data = json[1]
-        sentences: List[str] = data['sentences']
-        ann_mspan2dranges: Dict[str, List[list]] = data['ann_mspan2dranges']
-        ann_mspan2guess_field: Dict[str, str] = data['ann_mspan2guess_field']
-        recguid_eventname_eventdict_list = data['recguid_eventname_eventdict_list']
+        doc_id: str = json[0] # doc_id 'SH600641_2009-01-05_47975101'
+        data = json[1] #具体文章内容
+        sentences: List[str] = data['sentences'] # 文章分句
+        ann_mspan2dranges: Dict[str, List[list]] = data['ann_mspan2dranges'] # mention -> dranges[sentence,start, end]
+        ann_mspan2guess_field: Dict[str, str] = data['ann_mspan2guess_field'] #mention -> field
+        recguid_eventname_eventdict_list = data['recguid_eventname_eventdict_list'] # [recguid, eventname, eventdict]
 
         assert len(ann_mspan2dranges) == len(ann_mspan2guess_field)
         entities = []

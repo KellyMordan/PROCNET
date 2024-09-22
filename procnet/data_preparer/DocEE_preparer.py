@@ -33,13 +33,13 @@ class DocEEPreparer(BasicPreparer):
 
         [[self.seq_label_BIO_tags_generate(doc) for doc in one_docs] for one_docs in self.all_docs]
 
-        self.seq_bio_index_to_cate = ['Null'] + sorted(list(self.seq_label_category_set))
-        self.seq_bio_cate_to_index = {self.seq_bio_index_to_cate[i]: i for i in range(len(self.seq_bio_index_to_cate))}
+        self.seq_bio_index_to_cate = ['Null'] + sorted(list(self.seq_label_category_set)) #25种实体类型（包含null）
+        self.seq_bio_cate_to_index = {self.seq_bio_index_to_cate[i]: i for i in range(len(self.seq_bio_index_to_cate))} #实体类型2index
 
-        self.seq_BIO_index_to_tag = ['O'] + [x + '-B' for x in self.seq_bio_index_to_cate[1:]] + [x + '-I' for x in self.seq_bio_index_to_cate[1:]]
-        self.seq_BIO_tag_to_index = {self.seq_BIO_index_to_tag[i]: i for i in range(len(self.seq_BIO_index_to_tag))}
+        self.seq_BIO_index_to_tag = ['O'] + [x + '-B' for x in self.seq_bio_index_to_cate[1:]] + [x + '-I' for x in self.seq_bio_index_to_cate[1:]] #index2实体BIO类型
+        self.seq_BIO_tag_to_index = {self.seq_BIO_index_to_tag[i]: i for i in range(len(self.seq_BIO_index_to_tag))} #实体BIO类型2index
 
-        self.seq_bio_tag_index_to_cate_index = {0: 0}
+        self.seq_bio_tag_index_to_cate_index = {0: 0} #b-,i-to cate index
         for cate in self.seq_bio_index_to_cate[1:]:
             cate_index = self.seq_bio_cate_to_index[cate]
             b_index = self.seq_BIO_tag_to_index[cate + '-B']
@@ -54,9 +54,9 @@ class DocEEPreparer(BasicPreparer):
                 for event in doc.events:
                     for k, v in event.items():
                         if k == 'EventType':
-                            event_type_label_set_from_data.add(v)
+                            event_type_label_set_from_data.add(v) #5种事件类型
                         else:
-                            event_role_label_set_from_data.add(k)
+                            event_role_label_set_from_data.add(k) # 22个非空事件field
         for k, v in self.SCHEMA.items():
             self.event_type_label_set.add(k)
             [self.event_role_label_set.add(x) for x in v]
@@ -71,23 +71,23 @@ class DocEEPreparer(BasicPreparer):
         self.event_role_relation_to_index = {self.event_role_index_to_relation[i]: i for i in range(len(self.event_role_index_to_relation))}
         logging.debug('num event_role_index_to_relation: {}, event_role_index_to_relation: {}'.format(len(self.event_role_index_to_relation), self.event_role_index_to_relation))
 
-        self.event_schema_index = {}
+        self.event_schema_index = {} #{事件类型id:[事件fieldid,...]}
         for k, v in self.SCHEMA.items():
-            new_v = [self.event_role_relation_to_index[x] for x in v]
-            new_k = self.event_type_type_to_index[k]
+            new_v = [self.event_role_relation_to_index[x] for x in v] # index替换field
+            new_k = self.event_type_type_to_index[k] #index 替换 事件类型
             self.event_schema_index[new_k] = new_v
 
         self.train_docs = self.all_docs[0]
         self.dev_docs = self.all_docs[1]
         self.test_docs = self.all_docs[2]
 
-        pos_event_num_total = 0
+        pos_event_num_total = 0 #真正的事件个数
         for doc in self.train_docs:
             pos_event_num_total += len(doc.events)
-        all_event_num_total = config.proxy_slot_num * len(self.train_docs)
-        neg_event_num_total = all_event_num_total - pos_event_num_total
-        self.pos_event_ratio_total = pos_event_num_total / all_event_num_total
-        self.neg_event_ratio_total = neg_event_num_total / all_event_num_total
+        all_event_num_total = config.proxy_slot_num * len(self.train_docs) #假设每篇文章中包含16个伪事件节点
+        neg_event_num_total = all_event_num_total - pos_event_num_total #负样本个数
+        self.pos_event_ratio_total = pos_event_num_total / all_event_num_total #正样本比例
+        self.neg_event_ratio_total = neg_event_num_total / all_event_num_total #负样本比例
 
         # bio ratio
         neg_bio_num = 0
@@ -96,9 +96,9 @@ class DocEEPreparer(BasicPreparer):
             for seq in doc.seq_BIO_tags:
                 for x in seq:
                     if x == 'O':
-                        neg_bio_num += 1
-                    total_bio_num += 1
-        pos_bio_num = total_bio_num - neg_bio_num
+                        neg_bio_num += 1 #o算作负实体
+                    total_bio_num += 1 # 所有的实体个数
+        pos_bio_num = total_bio_num - neg_bio_num #除去负实体的都算作正样本实体
         self.pos_bio_ratio_total = pos_bio_num / total_bio_num
         self.neg_bio_ratio_total = neg_bio_num / total_bio_num
 
@@ -107,7 +107,7 @@ class DocEEPreparer(BasicPreparer):
             doc.sentences_token = [self.my_tokenize(x) for x in doc.sentences]
 
     def my_tokenize(self, s: str) -> List[str]:
-        r = UtilString.character_tokenize(s)
+        r = UtilString.character_tokenize(s) #分字符
         return r
 
     def find_end_pos_for_max_len(self, doc: DocEEDocumentExample, start: int, max_len: int) -> int:
@@ -138,10 +138,10 @@ class DocEEPreparer(BasicPreparer):
                     BIO_tags[pos[0]][pos[1] + 1: pos[2]] = [I_tag] * (pos[2] - pos[1] - 1)
                     self.seq_label_BIO_tag_set.add(B_tag)
                     self.seq_label_BIO_tag_set.add(I_tag)
-        doc.seq_BIO_tags = BIO_tags
+        doc.seq_BIO_tags = BIO_tags # 句子的BIO标签
 
     def longer_sentence_process_simple_cut(self, doc: DocEEDocumentExample, max_len: int):
-        all_short = True
+        all_short = True #所有句子长度都不超过510个token
         for sentence in doc.sentences_token:
             if len(sentence) > max_len:
                 all_short = False
@@ -149,7 +149,7 @@ class DocEEPreparer(BasicPreparer):
         if all_short:
             return
 
-        cut_record = []
+        cut_record = [] # 记录被截断的句子的序号
         for i in range(len(doc.sentences_token)):
             if len(doc.sentences_token[i]) > max_len:
                 doc.sentences_token[i] = doc.sentences_token[i][:max_len]
@@ -159,7 +159,7 @@ class DocEEPreparer(BasicPreparer):
             all_valid = True
             for pos in entity.positions:
                 if pos[0] in cut_record and pos[2] > max_len:
-                    all_valid = False
+                    all_valid = False #存在实体所在的句子被截断 
                     break
             if not all_valid:
                 new_positions = []
@@ -168,7 +168,7 @@ class DocEEPreparer(BasicPreparer):
                         continue
                     else:
                         new_positions.append(pos)
-                entity.positions = new_positions
+                entity.positions = new_positions # 删除无效的实体
 
     def get_loader_for_flattened_fragment_before_event(self):
         tokenizer = self.get_auto_tokenizer()

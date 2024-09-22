@@ -21,7 +21,7 @@ class DocEEBasicModel(BasicModel):
         self.language_model: PreTrainedModel = None
 
     def init_bio_tag_index_information(self) -> (set, set, int, int):
-        b_tag = []
+        b_tag = [] 
         i_tag = []
         for tag in self.preparer.seq_BIO_index_to_tag:
             if tag.endswith('-B'):
