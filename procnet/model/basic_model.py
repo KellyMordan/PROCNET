@@ -14,7 +14,7 @@ class BasicModel(nn.Module):
 
     @staticmethod
     def new_bert_model(model_name: str = 'bert-base-uncased') -> BertModel:
-        bert = BertModel.from_pretrained(model_name, cache_dir=GlobalConfigManager.get_transformers_cache_path())
+        bert = BertModel.from_pretrained(model_name)
         return bert
 
     @staticmethod

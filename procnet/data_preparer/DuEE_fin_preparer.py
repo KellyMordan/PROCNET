@@ -13,7 +13,7 @@ class DuEEfinPreparer(BasicPreparer):
     def __init__(self,
                  processor: DuEEfinProcessor,
                  ):
-        super().__init__(model_name="hfl/chinese-roberta-wwm-ext")
+        super().__init__(model_name="model_states/hfl/chinese-roberta-wwm-ext")
         self.processor = processor
         self.SCHEMA = processor.SCHEMA
         self.all_docs = processor.all_docs

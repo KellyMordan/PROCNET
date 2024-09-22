@@ -23,12 +23,12 @@ class BasicPreparer:
             model_name = self.model_name
         if model_name not in self.__auto_tokenizer:
             logging.debug("init {} auto tokenizer".format(model_name))
-            if model_name == "fnlp/bart-base-chinese":
-                tokenizer = BertTokenizer.from_pretrained(model_name, cache_dir=GlobalConfigManager.get_transformers_cache_path())
-            elif model_name == "hfl/chinese-roberta-wwm-ext":
-                tokenizer = BertTokenizer.from_pretrained(model_name, cache_dir=GlobalConfigManager.get_transformers_cache_path())
+            if model_name == "model_states/fnlp/bart-base-chinese":
+                tokenizer = BertTokenizer.from_pretrained(model_name)
+            elif model_name == "model_states/hfl/chinese-roberta-wwm-ext":
+                tokenizer = BertTokenizer.from_pretrained(model_name)
             else:
-                tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=GlobalConfigManager.get_transformers_cache_path())
+                tokenizer = AutoTokenizer.from_pretrained(model_name)
             self.__auto_tokenizer[model_name] = tokenizer
         return self.__auto_tokenizer[model_name]
 
