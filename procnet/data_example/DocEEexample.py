@@ -120,6 +120,7 @@ class DocEEDocumentExample:
         return copy.deepcopy(self)
 
     def get_fragment(self, start_sen: int, end_sen: int):
+        # 截断句子
         new_example = self.copy()
         new_example.sentences = self.sentences[start_sen: end_sen]
         new_example.sentences_token = self.sentences_token[start_sen: end_sen] if self.sentences_token is not None else None

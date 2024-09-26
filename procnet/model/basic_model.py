@@ -18,9 +18,9 @@ class BasicModel(nn.Module):
         return bert
 
     @staticmethod
-    def find_BIO_spans_positions(spans: list) -> List[list]:
-        o_token = BasicModel.o_token
-        b_suffix = BasicModel.b_suffix
+    def find_BIO_spans_positions(spans: list) -> List[list]: #TODO:9.26看到这里了
+        o_token = BasicModel.o_token # 'O'
+        b_suffix = BasicModel.b_suffix #'-B'
         if len(spans) == 0:
             return []
 

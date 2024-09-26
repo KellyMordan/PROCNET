@@ -99,8 +99,8 @@ class DocEEPreparer(BasicPreparer):
                         neg_bio_num += 1 #o算作负实体
                     total_bio_num += 1 # 所有的实体个数
         pos_bio_num = total_bio_num - neg_bio_num #除去负实体的都算作正样本实体
-        self.pos_bio_ratio_total = pos_bio_num / total_bio_num
-        self.neg_bio_ratio_total = neg_bio_num / total_bio_num
+        self.pos_bio_ratio_total = pos_bio_num / total_bio_num #正field样本比例
+        self.neg_bio_ratio_total = neg_bio_num / total_bio_num #负field样本比例
 
     def tokenize_sentences(self, docs: List[DocEEDocumentExample]):
         for doc in docs:
@@ -110,16 +110,17 @@ class DocEEPreparer(BasicPreparer):
         r = UtilString.character_tokenize(s) #分字符
         return r
 
+    #在给定文档中找到满足最大长度限制的句子序列的结束位置。
     def find_end_pos_for_max_len(self, doc: DocEEDocumentExample, start: int, max_len: int) -> int:
         acc_len = 0
         end = start
-        for i in range(start, len(doc.sentences_token)):
+        for i in range(start, len(doc.sentences_token)):#实现短句拼接
             acc_len += len(doc.sentences_token[i])
             if acc_len > max_len:
                 break
             else:
                 end = i + 1
-        if start == end:
+        if start == end: # 如果一个句子太长就会直接返回，否则就返回正常结束位置
             raise Exception('A sentence is more than max_len len! which is {}'.format([len(x) for x in doc.sentences_token]))
         assert sum([len(x) for x in doc.sentences_token[start:end]]) <= max_len
         return end
@@ -175,7 +176,7 @@ class DocEEPreparer(BasicPreparer):
 
         class MyDataSet(Dataset):
             def padding_to_max_len(self, arrays: List[list], padding_token):
-                max_len = max(len(array) for array in arrays)
+                max_len = max(len(array) for array in arrays) #按照最长的句子填充
                 new_arrays = []
                 for array in arrays:
                     padding_len = max_len - len(array)
@@ -197,6 +198,7 @@ class DocEEPreparer(BasicPreparer):
                 return len(this.examples)
 
             def __getitem__(this, index):
+                #会在使用方括号 [] 来访问对象的元素时被自动调用
                 example = this.examples[index]
 
                 total_sentence_nums = len(example.sentences_token)
@@ -204,6 +206,7 @@ class DocEEPreparer(BasicPreparer):
                 sub_examples = []
                 start = 0
                 end = 0
+                # 完成长句拆分为短句而非直接截断抛弃后面的
                 while end < total_sentence_nums:
                     end = self.find_end_pos_for_max_len(doc=example, start=start, max_len=self.config.max_len)
                     sub_example = example.get_fragment(start_sen=start, end_sen=end)
@@ -219,9 +222,9 @@ class DocEEPreparer(BasicPreparer):
                     input_token = [this.tokenizer.cls_token]
                     for x in sub_example.sentences_token:
                         input_token += x
-                    input_id = this.tokenizer.convert_tokens_to_ids(input_token)
+                    input_id = this.tokenizer.convert_tokens_to_ids(input_token) #token to id
                     input_ids.append(input_id)
-                    input_att_mask = [1] * len(input_id)
+                    input_att_mask = [1] * len(input_id) #mask
                     input_att_masks.append(input_att_mask)
 
                     BIO_tags = ['O']
@@ -231,15 +234,15 @@ class DocEEPreparer(BasicPreparer):
                     BIO_ids.append(BIO_id)
 
                 events_label = []
-                for event in example.events:
+                for event in example.events: #TODO:check这里的key value结构
                     event_label = {}
                     for k, v in event.items():
                         if k == 'EventType':
                             event_label[k] = self.event_type_type_to_index[v]
-                        else:
+                        else: 
                             if v is not None:
                                 v_id = this.tokenizer.convert_tokens_to_ids(self.my_tokenize(v))
-                                event_label[tuple(v_id)] = self.event_role_relation_to_index[k]
+                                event_label[tuple(v_id)] = self.event_role_relation_to_index[k] #TODO:这里是啥
                     events_label.append(event_label)
 
                 input_ids = [torch.LongTensor(x) for x in input_ids]

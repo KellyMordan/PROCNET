@@ -21,36 +21,36 @@ class DocEEBasicModel(BasicModel):
         self.language_model: PreTrainedModel = None
 
     def init_bio_tag_index_information(self) -> (set, set, int, int):
-        b_tag = [] 
+        b_tag = []  
         i_tag = []
         for tag in self.preparer.seq_BIO_index_to_tag:
             if tag.endswith('-B'):
                 b_tag.append(tag)
             elif tag.endswith('-I'):
                 i_tag.append(tag)
-        the_chosen_tag = b_tag[0][:-2]
-        the_chosen_b_tag_index = self.preparer.seq_BIO_tag_to_index[the_chosen_tag + '-B']
-        the_chosen_i_tag_index = self.preparer.seq_BIO_tag_to_index[the_chosen_tag + '-I']
-        b_tag_index = [self.preparer.seq_BIO_tag_to_index[x] for x in b_tag]
-        i_tag_index = [self.preparer.seq_BIO_tag_to_index[x] for x in i_tag]
+        the_chosen_tag = b_tag[0][:-2] #AveragePrice
+        the_chosen_b_tag_index = self.preparer.seq_BIO_tag_to_index[the_chosen_tag + '-B'] #1 b中第一个index
+        the_chosen_i_tag_index = self.preparer.seq_BIO_tag_to_index[the_chosen_tag + '-I'] #25 i中第一个index
+        b_tag_index = [self.preparer.seq_BIO_tag_to_index[x] for x in b_tag] #[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+        i_tag_index = [self.preparer.seq_BIO_tag_to_index[x] for x in i_tag] #[26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44] i标签对应的index
         return set(b_tag_index), set(i_tag_index), the_chosen_b_tag_index, the_chosen_i_tag_index
 
     def get_bio_positions(self, bio_res: list, input_prob: bool, binary_mode: bool = False, input_id_int=None, ignore_padding_token: bool = True) -> list:
         if binary_mode:
             if input_prob:
-                for x in bio_res:
+                for x in bio_res: #bio_res[497,49] 497是算上cls等特殊符号的seqlen,49是算上o的bio
                     sum_b = 0
                     for i in self.b_tag_index:
                         sum_b += x[i]
                     sum_i = 0
                     for i in self.i_tag_index:
                         sum_i += x[i]
-                    x[self.one_b_tag_index] = sum_b
-                    x[self.one_i_tag_index] = sum_i
+                    x[self.one_b_tag_index] = sum_b #将所有b的全部放到oneb
+                    x[self.one_i_tag_index] = sum_i #将所有i的全部放到onei
         if input_prob:
             bio_index = []
             for x in bio_res:
-                index = UtilStructure.find_max_number_index(x)
+                index = UtilStructure.find_max_number_index(x) #找到最大,也就是一个seq的每个token最有可能是b还是o
                 bio_index.append(index)
         else:
             bio_index = bio_res
@@ -161,13 +161,13 @@ class DocEEProxyNodeModel(DocEEBasicModel):
 
         self.mid_BIO_tag = self.num_BIO_tag // 2 + 1
         for i in range(self.mid_BIO_tag - 1):
-            assert self.seq_BIO_index_to_tag[1 + i][:-2] == self.seq_BIO_index_to_tag[self.mid_BIO_tag + i][:-2]
-            assert self.seq_bio_index_to_cate_no_null[i] == self.seq_BIO_index_to_tag[1 + i][:-2]
+            assert self.seq_BIO_index_to_tag[1 + i][:-2] == self.seq_BIO_index_to_tag[self.mid_BIO_tag + i][:-2] # B-XXX == I-XXX
+            assert self.seq_bio_index_to_cate_no_null[i] == self.seq_BIO_index_to_tag[1 + i][:-2] # B-XXX == XXX
 
         self.language_model = self.new_bert_model(model_name=config.model_name)
         self.lm_size = self.language_model.config.hidden_size
 
-        # (proxy_slot_num, proxy_size)
+        # (proxy_slot_num, proxy_size) 16，512 创建一个形状为 (self.num_proxy_slot, self.node_size) 的张量。
         self.initial_proxy_all_embedding = nn.Parameter(nn.init.xavier_uniform_(torch.FloatTensor(self.num_proxy_slot, self.node_size)))
         self.lm_bio_linear = nn.Sequential(
             nn.Dropout(self.dropout_ratio),
@@ -176,15 +176,22 @@ class DocEEProxyNodeModel(DocEEBasicModel):
             nn.GELU(),
             nn.Dropout(self.dropout_ratio),
             nn.Linear(self.lm_size // 4, self.num_BIO_tag),
-        )
+        ) #通过dropout、线性层、LayerNorm、GELU激活和再次dropout，最终将输入维度从lm_size降至num_BIO_tag，用于BIO标签分类。
         self.lm_hidden_linear = nn.Sequential(
-            nn.Linear(self.lm_size + 1, self.node_size),
+            nn.Linear(self.lm_size + 1, self.node_size), #768+1，512
             nn.LayerNorm(self.node_size),
             nn.GELU(),
             nn.Dropout(self.dropout_ratio),
-        )
+        )#将lm_size + 1维输入映射至node_size，经过LayerNorm和GELU激活后，进行dropout处理，用于隐藏层特征转换。
+        '''
+        用于处理语言模型（LM）的隐藏层特征。功能包括：
+        将输入向量（维度为lm_size + 1）线性变换到node_size维度。
+        对变换后的向量应用层规范化（LayerNorm）。
+        使用GELU激活函数。
+        以dropout_ratio概率对输出进行Dropout操作，防止过拟合。
+        '''
         self.lm_cls_hidden_linear = nn.Sequential(
-            nn.Linear(self.lm_size + 1, self.node_size),
+            nn.Linear(self.lm_size + 1, self.node_size), #768+1，512
             nn.LayerNorm(self.node_size),
             nn.GELU(),
             nn.Dropout(self.dropout_ratio),
@@ -194,7 +201,7 @@ class DocEEProxyNodeModel(DocEEBasicModel):
 
         self.proxy_slot_event_type_linear = nn.Sequential(
             nn.Linear(self.node_size, self.num_event_type),
-        )
+        ) # 将nodesize映射到事件类型6
         self.proxy_span_attention = nn.MultiheadAttention(embed_dim=self.node_size, num_heads=8, dropout=self.dropout_ratio, batch_first=True)
         self.span_proxy_slot_relation_linear = nn.Sequential(
             nn.Linear(self.node_size + self.node_size, self.node_size // 4),
@@ -210,11 +217,11 @@ class DocEEProxyNodeModel(DocEEBasicModel):
             nn.GELU(),
             nn.Dropout(self.dropout_ratio),
             nn.Linear(self.node_size // 4, 1),
-        )
+        ) #将输入特征的维度降低到原来的四分之一，经过一个线性层输出单个值。 maybe是总事件数量
         self.span_span_relation_linear = nn.Sequential(
             nn.Dropout(self.dropout_ratio),
             nn.Linear(self.node_size * 2, 2),
-        )
+        ) #两span间关系预测
         self.ce_none_reduction_loss_fn = nn.CrossEntropyLoss(reduction='none')
         self.ce_normal_loss_fn = nn.CrossEntropyLoss()
         self.mse_loss_fn = nn.MSELoss()
@@ -249,24 +256,24 @@ class DocEEProxyNodeModel(DocEEBasicModel):
             # cpu [101, 102, 103]
             input_id_int = input_ids_int[time_step]
             # --- all sentence to LM for BIO ---
-            lm_res: BaseModelOutputWithPoolingAndCrossAttentions = self.language_model(input_ids=input_ids)
+            lm_res: BaseModelOutputWithPoolingAndCrossAttentions = self.language_model(input_ids=input_ids) #bert做embedding
             # (1, seq_length, lm_size)
             lm_last_hidden_states = lm_res.last_hidden_state
             # (1, seq_length, bio_tags_size)
-            lm_logit = self.lm_bio_linear(lm_last_hidden_states)
+            lm_logit = self.lm_bio_linear(lm_last_hidden_states) #得到bio的logit
             if bio_ids is None:
                 one_loss_bio = torch.FloatTensor([0]).to(device)
             else:
-                raw_loss_bio = self.ce_none_reduction_loss_fn(lm_logit.view(-1, self.num_BIO_tag), bio_ids.view(-1, ))
-                bio_is_o = bio_ids.squeeze(0) == self.null_bio_index
+                raw_loss_bio = self.ce_none_reduction_loss_fn(lm_logit.view(-1, self.num_BIO_tag), bio_ids.view(-1, )) #计算原始损失值 raw_loss_bio。
+                bio_is_o = bio_ids.squeeze(0) == self.null_bio_index #找到标签为O（非实体）和非O的位置。
                 bio_not_o = bio_ids.squeeze(0) != self.null_bio_index
-                loss_o = torch.sum(raw_loss_bio * bio_is_o)
+                loss_o = torch.sum(raw_loss_bio * bio_is_o) #分别计算O标签和非O标签的损失值 loss_o 和 loss_bi
                 loss_bi = torch.sum(raw_loss_bio * bio_not_o)
-                one_loss_bio = loss_o * self.pos_bio_ratio_total + loss_bi * self.neg_bio_ratio_total
+                one_loss_bio = loss_o * self.pos_bio_ratio_total + loss_bi * self.neg_bio_ratio_total #结合正负样本比例调整损失值，并乘以0.01进行缩放。
                 one_loss_bio = one_loss_bio * 0.01
             loss_bio += one_loss_bio
 
-            # (1, seq_length, bio_tags_size)
+            # (1, seq_length, bio_tags_size) 1,425,49
             bio_prob = F.softmax(lm_logit, dim=2)
             # cpu probability of bio.  [[[0.1, 0.9], [0.5, 0.4 ]], ]
             bio_result = bio_prob.squeeze(0).detach().cpu().numpy().tolist()
