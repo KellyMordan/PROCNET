@@ -38,7 +38,7 @@ class DocEEBasicModel(BasicModel):
     def get_bio_positions(self, bio_res: list, input_prob: bool, binary_mode: bool = False, input_id_int=None, ignore_padding_token: bool = True) -> list:
         if binary_mode:
             if input_prob:
-                for x in bio_res: #bio_res[497,49] 497是算上cls等特殊符号的seqlen,49是算上o的bio
+                for x in bio_res: #bio_res[496,49]  TODO:这里为什么是496？
                     sum_b = 0
                     for i in self.b_tag_index:
                         sum_b += x[i]
@@ -46,7 +46,7 @@ class DocEEBasicModel(BasicModel):
                     for i in self.i_tag_index:
                         sum_i += x[i]
                     x[self.one_b_tag_index] = sum_b #将所有b的全部放到oneb
-                    x[self.one_i_tag_index] = sum_i #将所有i的全部放到onei
+                    x[self.one_i_tag_index] = sum_i #将所有i的全部放到onei  修改了原本bio_res 1，25的位置
         if input_prob:
             bio_index = []
             for x in bio_res:
@@ -73,11 +73,11 @@ class DocEEBasicModel(BasicModel):
                             raise Exception('get_bio_positions has padding token before other token!')
                     else:
                         before_has_pad = True
-        else:
+        else: #不忽略
             final_index = []
-            for i in range(len(bio_index)):
+            for i in range(len(bio_index)): #496
                 if input_id_int is not None:
-                    if input_id_int[i] != self.preparer.get_auto_tokenizer().pad_token_id:
+                    if input_id_int[i] != self.preparer.get_auto_tokenizer().pad_token_id: #！=0
                         final_index.append(bio_index[i])
                     else:
                         final_index.append(self.preparer.seq_BIO_tag_to_index['O'])
@@ -87,7 +87,7 @@ class DocEEBasicModel(BasicModel):
                     else:
                         final_index.append(self.preparer.seq_BIO_tag_to_index['O'])
 
-        if binary_mode:
+        if binary_mode: #这里为什么要重复做，final_index没有任何变化
             for i in range(len(final_index)):
                 if final_index[i] in self.i_tag_index:
                     final_index[i] = self.one_i_tag_index
@@ -97,7 +97,7 @@ class DocEEBasicModel(BasicModel):
         bio_tag = [self.preparer.seq_BIO_index_to_tag[x] for x in final_index]
         # for the CLS of the first token, which should be 'O'
         bio_tag[0] = 'O'
-        if bio_tag[1][-1] == 'I':
+        if bio_tag[1][-1] == 'I': #应该是修正，防止第一个是I，则修正为B
             bio_tag[1] = bio_tag[1][:-1] + 'B'
         position = BasicModel.find_BIO_spans_positions(bio_tag)
         bio_tag = self.validify_BIO_span(bio_tag, position, 'ignore')
@@ -217,12 +217,12 @@ class DocEEProxyNodeModel(DocEEBasicModel):
             nn.GELU(),
             nn.Dropout(self.dropout_ratio),
             nn.Linear(self.node_size // 4, 1),
-        ) #将输入特征的维度降低到原来的四分之一，经过一个线性层输出单个值。 maybe是总事件数量
+        ) #将输入特征的维度降低到原来的四分之一，经过一个线性层输出单个值。 总事件数量
         self.span_span_relation_linear = nn.Sequential(
             nn.Dropout(self.dropout_ratio),
             nn.Linear(self.node_size * 2, 2),
         ) #两span间关系预测
-        self.ce_none_reduction_loss_fn = nn.CrossEntropyLoss(reduction='none')
+        self.ce_none_reduction_loss_fn = nn.CrossEntropyLoss(reduction='none') #交叉熵损失函数计算
         self.ce_normal_loss_fn = nn.CrossEntropyLoss()
         self.mse_loss_fn = nn.MSELoss()
 
@@ -236,14 +236,14 @@ class DocEEProxyNodeModel(DocEEBasicModel):
                 ):
         # --- setup ---
         device = next(self.parameters()).device
-        sentence_num = len(inputs_ids)
+        sentence_num = len(inputs_ids) #2
 
         # cpu [ [101, 102, 103], [102, 104, 105] ]
         input_ids_int = [x.detach().cpu().numpy().tolist() for x in inputs_ids]
 
         # --- entity record init ---
         bio_probs = []
-        lm_clss_times = []
+        lm_clss_times = [] #TODO：不理解这个是啥
         lm_hidden_state_times = []
         position_times = []
         loss_bio = torch.FloatTensor([0]).to(device)
@@ -258,9 +258,9 @@ class DocEEProxyNodeModel(DocEEBasicModel):
             # --- all sentence to LM for BIO ---
             lm_res: BaseModelOutputWithPoolingAndCrossAttentions = self.language_model(input_ids=input_ids) #bert做embedding
             # (1, seq_length, lm_size)
-            lm_last_hidden_states = lm_res.last_hidden_state
+            lm_last_hidden_states = lm_res.last_hidden_state #inputs经过bert嵌入后的最后一个hidden_state
             # (1, seq_length, bio_tags_size)
-            lm_logit = self.lm_bio_linear(lm_last_hidden_states) #得到bio的logit
+            lm_logit = self.lm_bio_linear(lm_last_hidden_states) #通过线性bio分类模型得到bio的logit.用于bio tag分类
             if bio_ids is None:
                 one_loss_bio = torch.FloatTensor([0]).to(device)
             else:
@@ -273,21 +273,21 @@ class DocEEProxyNodeModel(DocEEBasicModel):
                 one_loss_bio = one_loss_bio * 0.01
             loss_bio += one_loss_bio
 
-            # (1, seq_length, bio_tags_size) 1,425,49
-            bio_prob = F.softmax(lm_logit, dim=2)
+            # (1, seq_length, bio_tags_size) 1,425,49   预测的bio
+            bio_prob = F.softmax(lm_logit, dim=2) #得到bio概率
             # cpu probability of bio.  [[[0.1, 0.9], [0.5, 0.4 ]], ]
             bio_result = bio_prob.squeeze(0).detach().cpu().numpy().tolist()
             # cpu positions. [[[start, end], [start, end]], ]
             bio_probs.append(bio_prob.squeeze(0).detach().cpu())
-            pred_position = self.get_bio_positions(bio_res=bio_result, input_id_int=input_id_int, input_prob=True, binary_mode=True, ignore_padding_token=False)
+            pred_position = self.get_bio_positions(bio_res=bio_result, input_id_int=input_id_int, input_prob=True, binary_mode=True, ignore_padding_token=False) #预测的span的下标索引
 
             # (1, lm_size )
-            lm_clsss = lm_last_hidden_states[:, 0]
+            lm_clsss = lm_last_hidden_states[:, 0] #seq的第一个 TODO:这里为什么要选第一个
             # (1, lm_size + 1)
             lm_clsss = torch.cat([lm_clsss, torch.ones((1, 1), dtype=torch.float, device=device) * time_step], dim=1)
             # (1, node_size)
             lm_clss = self.lm_cls_hidden_linear(lm_clsss)
-            # (1, seq_length, lm_size + 1)
+            # (1, seq_length, lm_size + 1) 创建一个新的张量，其形状与 lm_last_hidden_states 兼容，并填充一个标量值。将这个新张量与原始隐藏状态连接，扩展其特征维度。最终得到的结果 是一个包含了额外时间步信息的隐藏状态张量。
             lm_last_hidden_states = torch.cat([lm_last_hidden_states, torch.ones((1, lm_last_hidden_states.size(1), 1), dtype=torch.float, device=device) * time_step], dim=2)
             # (1, seq_length, node_size)
             lm_last_hidden_states = self.lm_hidden_linear(lm_last_hidden_states)
@@ -320,7 +320,7 @@ class DocEEProxyNodeModel(DocEEBasicModel):
         cls_for_event_num = torch.cat(lm_clss_times, dim=0)
         # (node_size)
         cls_for_event_num = torch.mean(cls_for_event_num, dim=0, keepdim=False)
-        total_event_num_logit = self.cls_total_event_num_linear(cls_for_event_num)
+        total_event_num_logit = self.cls_total_event_num_linear(cls_for_event_num) #预测事件总数
         total_event_num_pred = total_event_num_logit.detach().cpu().numpy().tolist()[0]
         total_event_num_pred = int(total_event_num_pred + 0.99999)
         event_num_pred_result = total_event_num_pred
@@ -329,30 +329,30 @@ class DocEEProxyNodeModel(DocEEBasicModel):
         # --- event num pred loss ---
         total_event_num = len(events_labels)
         total_event_num_label = torch.FloatTensor([total_event_num]).to(device)
-        total_event_num_loss = self.mse_loss_fn(total_event_num_logit.view(-1), total_event_num_label.view(-1))
+        total_event_num_loss = self.mse_loss_fn(total_event_num_logit.view(-1), total_event_num_label.view(-1)) #事件个数损失函数
 
-        # --- init the graph ---
+        # --- init the graph  构造图 ---
         # {(1, 2, 6, 9): [1, 5, 7], (5, 1, 6, 7): [2, 6, 10]}
         node_span_to_indexes = {}
         # {1: (1, 2, 6, 9), 2: (5, 1, 6, 7)}
         node_indexes_to_span = {}
         # [1, 3, 5, 7]
         cls_indexes = []
-        # --- M-node ---
+        # --- M-node  16个事件节点---
         proxy_all_indexes = list(range(num_all_proxy_slot))
         node_vector = self.initial_proxy_all_embedding[:total_event_num_index]
         # ---- M-self ---
         # [[h, t], [h, t]]
-        edge_index = [[i, i] for i in proxy_all_indexes]
+        edge_index = [[i, i] for i in proxy_all_indexes] #自环 16
         # [0, 0, 0, 1, 1, 0]
         edge_type = [self.edge_type_table["M-self"]] * len(edge_index)
         # --- M-M relation M-all ---
-        new_edge_index = [[head, tail] for tail in proxy_all_indexes for head in proxy_all_indexes if head != tail]
+        new_edge_index = [[head, tail] for tail in proxy_all_indexes for head in proxy_all_indexes if head != tail] #240=16*15
         new_edge_type = [self.edge_type_table['M-M']] * len(new_edge_index)
         edge_index += new_edge_index
         edge_type += new_edge_type
 
-        # (proxy_slot_num, node_size)
+        # (proxy_slot_num, node_size) 16,512
         new_node_vector = [node_vector]
         current_index = node_vector.size(0) - 1
         for time_step in range(sentence_num):
@@ -361,7 +361,7 @@ class DocEEProxyNodeModel(DocEEBasicModel):
             lm_cls = lm_clss_times[time_step]
             position = position_times[time_step]
             lm_hidden_state = lm_hidden_state_times[time_step]
-            # --- cls node ---
+            # --- cls node  分类节点---
             current_index += 1
             new_node_vector.append(lm_cls)
             cls_indexes.append(current_index)
@@ -371,13 +371,13 @@ class DocEEProxyNodeModel(DocEEBasicModel):
                 new_edge_type = [self.edge_type_table['C-M']] * len(new_edge_index)
                 edge_index += new_edge_index
                 edge_type += new_edge_type
-            # --- C-self ---
+            # --- C-self --- 这个目前不在
             if 'C-self' in self.edge_type_table:
                 new_edge_index = [[current_index, current_index]]
                 new_edge_type = [self.edge_type_table['C-self']]
                 edge_index += new_edge_index
                 edge_type += new_edge_type
-            # # --- C-C edge ---
+            # # --- C-C edge --- 这个目前不在
             if 'C-C' in self.edge_type_table:
                 new_edge_index = [[current_index, i] for i in cls_indexes if current_index != i]
                 new_edge_index += [[i, current_index] for i in cls_indexes if current_index != i]
@@ -393,41 +393,41 @@ class DocEEProxyNodeModel(DocEEBasicModel):
                 # (span_length, node_size)
                 span_hidden_state = lm_hidden_state[pos[0]:pos[1]]
                 # (1, node_size)
-                span_state = torch.mean(span_hidden_state, dim=0, keepdim=True)
+                span_state = torch.mean(span_hidden_state, dim=0, keepdim=True) #span的平均state
                 # --- span node ---
                 current_index += 1
                 new_node_vector.append(span_state)
                 # node_type.append(self.node_type_table['span'])
                 node_indexes_to_span[current_index] = span
                 if span not in node_span_to_indexes:
-                    node_span_to_indexes[span] = [current_index]
+                    node_span_to_indexes[span] = [current_index] #span_node的index对应的input_ids
                 else:
                     node_span_to_indexes[span].append(current_index)
                 # --- S-M edge ---
                 if 'S-M' in self.edge_type_table:
-                    new_edge_index = [[current_index, i] for i in proxy_all_indexes]
+                    new_edge_index = [[current_index, i] for i in proxy_all_indexes] #mention---span
                     new_edge_type = [self.edge_type_table['S-M']] * len(new_edge_index)
                     edge_index += new_edge_index
                     edge_type += new_edge_type
-                # --- S-C edge ---
+                # --- S-C edge 这个没有 ---
                 if 'S-C' in self.edge_type_table:
                     new_edge_index = [[current_index, i] for i in cls_indexes]
                     new_edge_type = [self.edge_type_table['S-C']] * len(new_edge_index)
                     edge_index += new_edge_index
                     edge_type += new_edge_type
-                # --- C-S edge ---
+                # --- C-S   这个没有  edge ---
                 if 'C-S' in self.edge_type_table:
                     new_edge_index = [[i, current_index] for i in cls_indexes]
                     new_edge_type = [self.edge_type_table['C-S']] * len(new_edge_index)
                     edge_index += new_edge_index
                     edge_type += new_edge_type
-                # --- S-self ---
+                # --- S-self 这个没有 ---
                 if 'S-self' in self.edge_type_table:
                     new_edge_index = [[current_index, current_index]]
                     new_edge_type = [self.edge_type_table['S-self']]
                     edge_index += new_edge_index
                     edge_type += new_edge_type
-                # --- S-S edge ---
+                # --- S-S edge  这个没有 ---
                 if 'S-S' in self.edge_type_table:
                     if span in node_span_to_indexes and len(node_span_to_indexes[span]) > 1:
                         new_edge_index = [[current_index, i] for i in node_span_to_indexes[span] if current_index != i] + [[i, current_index] for i in node_span_to_indexes[span] if current_index != i]
@@ -437,7 +437,7 @@ class DocEEProxyNodeModel(DocEEBasicModel):
 
         # (proxy_slot_num+span_num, proxy_size)
         node_vector = torch.cat(new_node_vector, dim=0)
-        assert len(edge_index) == len(edge_type)
+        assert len(edge_index) == len(edge_type) # 448
         assert node_vector.size(0) == current_index + 1
 
         # --- GCN ---
@@ -464,16 +464,16 @@ class DocEEProxyNodeModel(DocEEBasicModel):
             return loss, records
 
         # (num_all_proxy_slot, node_size)
-        proxy_slot = gcn_node_vector[:num_all_proxy_slot]
+        proxy_slot = gcn_node_vector[:num_all_proxy_slot] #代理节点的gcn卷积后的向量
 
         # --- event type logit ---
-        # (num_all_proxy_slot, num_event_type)
+        # (num_all_proxy_slot, num_event_type) 16,6  代理节点的
         event_type_logit = self.proxy_slot_event_type_linear(proxy_slot)
 
         # --- event relation logit --
         span_num = len(node_span_to_indexes)
         max_individual_span_num = max([len(v) for k, v in node_span_to_indexes.items()])
-        span_tensor_index_to_span = list(node_span_to_indexes.keys())
+        span_tensor_index_to_span = list(node_span_to_indexes.keys()) #10.8 TODO到这里了
         span_tensor_span_to_index = {span_tensor_index_to_span[i]: i for i in range(span_num)}
         # (span_num, individual_span_num, node_size)
         span_tensor = torch.zeros((span_num, max_individual_span_num, self.node_size), dtype=torch.float, device=device)

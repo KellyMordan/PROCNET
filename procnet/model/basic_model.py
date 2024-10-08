@@ -18,7 +18,7 @@ class BasicModel(nn.Module):
         return bert
 
     @staticmethod
-    def find_BIO_spans_positions(spans: list) -> List[list]: #TODO:9.26看到这里了
+    def find_BIO_spans_positions(spans: list) -> List[list]: 
         o_token = BasicModel.o_token # 'O'
         b_suffix = BasicModel.b_suffix #'-B'
         if len(spans) == 0:
@@ -27,14 +27,14 @@ class BasicModel(nn.Module):
         to_read_spans = copy.deepcopy(spans)
         o_split_spans: List[list] = []
         left_index = 0
-        while left_index < len(to_read_spans):
+        while left_index < len(to_read_spans): #将 spans 列表中由 o_token 标记分割成多个子列表，并将这些子列表存储在 o_split_spans 中。
             for i in range(left_index, len(to_read_spans)):
                 if to_read_spans[i] == o_token:
-                    if i == left_index:
+                    if i == left_index: # only one o
                         o_split_spans.append(to_read_spans[i:i + 1])
                         left_index = i + 1
                     else:
-                        o_split_spans.append(to_read_spans[left_index:i])
+                        o_split_spans.append(to_read_spans[left_index:i]) #
                         left_index = i
                     break
                 if i == len(to_read_spans) - 1:
@@ -43,7 +43,7 @@ class BasicModel(nn.Module):
                     break
         assert sum([len(x) for x in o_split_spans]) == len(spans)
 
-        bo_split_spans: List[list] = []
+        bo_split_spans: List[list] = [] #将上面以o拆分的再次分为以b拆分的
         for oss in o_split_spans:
             if len(oss) == 1:
                 bo_split_spans.append(oss)
@@ -66,7 +66,7 @@ class BasicModel(nn.Module):
         assert sum([len(x) for x in bo_split_spans]) == len(spans)
 
         boc_split_spans: List[list] = []
-        for boss in bo_split_spans:
+        for boss in bo_split_spans: #将不同的filed拆分
             if len(boss) == 1:
                 boc_split_spans.append(boss)
             else:
@@ -76,9 +76,9 @@ class BasicModel(nn.Module):
                         boc_split_spans.append(to_read_boss[:])
                         to_read_boss = []
                     for i in range(1, len(to_read_boss)):
-                        if to_read_boss[i-1][:-2] != to_read_boss[i][:-2]:
-                            boc_split_spans.append(to_read_boss[:i])
-                            to_read_boss = to_read_boss[i:]
+                        if to_read_boss[i-1][:-2] != to_read_boss[i][:-2]: # 发现两个相邻元素的field不同，
+                            boc_split_spans.append(to_read_boss[:i]) # 则将从开头到当前索引 i 的元素添加到 boc_split_spans
+                            to_read_boss = to_read_boss[i:] # 更新 to_read_boss
                             break
                         elif i == len(to_read_boss) - 1:
                             boc_split_spans.append(to_read_boss[:])
@@ -88,7 +88,7 @@ class BasicModel(nn.Module):
 
         positions = []
         start_len = 0
-        for boss in boc_split_spans:
+        for boss in boc_split_spans: #除去o的划分的下标索引
             end_len = start_len + len(boss)
             if len(boss) == 1 and boss[0] == o_token:
                 pass
@@ -105,12 +105,12 @@ class BasicModel(nn.Module):
         spans = copy.deepcopy(spans)
         for pos in positions:
             start, end = pos[0], pos[1]
-            if not spans[start].endswith(b_suffix):
+            if not spans[start].endswith(b_suffix): #span以-B结尾
                 if mode == 'ignore':
                     for i in range(start, end):
-                        spans[i] = o_token
+                        spans[i] = o_token #如果不符合，全部置o
                 elif mode == 'modify':
-                    spans[start] = spans[start][:-2] + b_suffix
+                    spans[start] = spans[start][:-2] + b_suffix #修正为-B结尾的
         return spans
 
     @staticmethod
