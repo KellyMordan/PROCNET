@@ -40,13 +40,13 @@ class DocEEBasicSeqLabelingTrainer(BasicTrainer):
         epoch_loss = None
         error_num = 0
         with tqdm(dataloader, unit="b", position=0, leave=True) as tqdm_epoch:
-            for batch in tqdm(dataloader):
+            for batch in tqdm(dataloader): #一篇一篇的去训练
                 batch_step += 1
                 use_mix_bio = False if epoch <= 2 else True
                 loss, res = model_run_fn(self.model, batch, run_eval=False, use_mix_bio=use_mix_bio)
                 loss.backward()
                 self.optimizer.gradient_update()
-                epoch_loss = loss.item() if epoch_loss is None else 0.98 * epoch_loss + 0.02 * loss.item()
+                epoch_loss = loss.item() if epoch_loss is None else 0.98 * epoch_loss + 0.02 * loss.item() #累计过往的epoch_loss
                 for r in res:
                     if 'error_report' in r and r['error_report'] != '':
                         error_num += 1
@@ -122,7 +122,7 @@ class DocEETrainer(DocEEBasicSeqLabelingTrainer):
         self.score_fn = metric.the_score_fn
 
     def model_fn(self, model: BasicModel, batch: list, run_eval: bool, use_mix_bio: bool):
-        doc_id, input_ids, input_att_masks, bio_ids, events_labels = (b for b in batch)
+        doc_id, input_ids, input_att_masks, bio_ids, events_labels = (b for b in batch) #batch是1
         input_ids = input_ids.to(self.device) if isinstance(input_ids, torch.Tensor) else [x.to(self.device) for x in input_ids]
         input_att_masks = input_att_masks.to(self.device) if isinstance(input_att_masks, torch.Tensor) else None
         if run_eval:
@@ -149,7 +149,7 @@ class DocEETrainer(DocEEBasicSeqLabelingTrainer):
                'doc_id': doc_id,
                'BIO_ans': BIO_ans,
                'event_ans': events_label,
-               }
+               } #真实的事件相关内容
         result.update(other_record)
         return loss, [result]
 

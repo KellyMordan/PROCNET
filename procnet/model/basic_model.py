@@ -115,7 +115,7 @@ class BasicModel(nn.Module):
 
     @staticmethod
     def event_ordering(matrix):
-        cost = matrix
+        cost = matrix #通过线性分配算法为事件排序生成最优分配，并返回最优分配的结果与其对应的最小成本。
         try:
             row_ind, col_ind = linear_sum_assignment(cost, maximize=False)
         except ValueError:

@@ -41,7 +41,7 @@ class DocEEMetric(BasicMetric):
             event_ans_multi = []
             event_pred_multi = []
             assert len(event_ans_all) == len(event_pred_all)
-            for i in range(len(event_ans_all)):
+            for i in range(len(event_ans_all)): #区分单一和多种
                 ea = event_ans_all[i]
                 ep = event_pred_all[i]
                 if len(ea) <= 1:
@@ -95,7 +95,7 @@ class DocEEMetric(BasicMetric):
             roles = event_schema[event_type]
             event_type_roles_list.append((event_type, roles))
 
-        gold_record_mat_list = []
+        gold_record_mat_list = [] #构造真实的事件记录列表
         for event_ans in events_ans:
             gold_record_mat = [[] for _ in range(event_num)]
             for e_ans in event_ans:
@@ -103,7 +103,7 @@ class DocEEMetric(BasicMetric):
                 roles_dict = {v: k for k, v in e_ans.items() if k != 'EventType'}
                 event_type = self.event_type_index_to_type[e_ans['EventType']]
                 event_type_id = type_to_index[event_type]
-                roles_tuple = []
+                roles_tuple = [] #input_ids
                 for i in range(len(event_schema[event_type])):
                     role_name = event_schema[event_type][i]
                     role_index = role_to_index[role_name]
@@ -118,20 +118,20 @@ class DocEEMetric(BasicMetric):
         pred_record_mat_list = []
         for event_pred in events_pred:
             pred_record_mat = [[] for _ in range(event_num)]
-            for e_pred in event_pred:
+            for e_pred in event_pred: 
                 event_type = UtilStructure.find_max_number_index(e_pred['EventType'])
                 event_type = self.event_type_index_to_type[event_type]
                 if event_type == 'Null':
                     continue
-                event_type_id = type_to_index[event_type]
+                event_type_id = type_to_index[event_type] #从16个代理节点中找到非空的事件类型
 
                 roles_dict = {}
                 for k, v in e_pred.items():
                     if k == 'EventType':
                         continue
-                    max_p, index = UtilStructure.find_max_and_number_index(v)
+                    max_p, index = UtilStructure.find_max_and_number_index(v) #span最可能的概率值以及role_index
                     if index not in roles_dict:
-                        roles_dict[index] = [[k, max_p]]
+                        roles_dict[index] = [[k, max_p]] 
                     else:
                         roles_dict[index].append([k, max_p])
                 for k in roles_dict:
@@ -140,9 +140,9 @@ class DocEEMetric(BasicMetric):
                     for x in roles_dict[k]:
                         if x[1] > best_p:
                             best_k, best_p = x[0], x[1]
-                    roles_dict[k] = [best_k, best_p]
+                    roles_dict[k] = [best_k, best_p] #对应论文中的如果多个节点被预测为相同的 参数，则保留具有最高概率的实体
                 for k in roles_dict:
-                    roles_dict[k] = roles_dict[k][0]
+                    roles_dict[k] = roles_dict[k][0] #去除概率值
 
                 roles_tuple = []
                 for i in range(len(event_schema[event_type])):

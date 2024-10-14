@@ -40,7 +40,7 @@ class BasicMetric:
         for pos in ans_positions:
             ans_positions_hash.add(str(pos[0]) + '-' + str(pos[1]))
 
-        for pos in pred_positions_hash:
+        for pos in pred_positions_hash: #遍历pred从ans中找到精准匹配的
             if pos in ans_positions_hash:
                 items = pos.split('-')
                 start = int(items[0])
@@ -87,18 +87,18 @@ class BasicMetric:
                 final_ans.append(all_ans[i])
                 final_pred.append(all_pred[i])
 
-        BIO_ans = [self.seq_BIO_index_to_tag[x] for x in final_ans]
+        BIO_ans = [self.seq_BIO_index_to_tag[x] for x in final_ans] #转换为标签
         BIO_pred = [self.seq_BIO_index_to_tag[x] for x in final_pred]
 
         BIO_pred_positions = BasicModel.find_BIO_spans_positions(BIO_pred)
 
-        BIO_pred_valid_ignore = BasicModel.validify_BIO_span(BIO_pred, BIO_pred_positions, 'ignore')
+        BIO_pred_valid_ignore = BasicModel.validify_BIO_span(BIO_pred, BIO_pred_positions, 'ignore') #做了修正，对于span开头标签不是以-B结尾的，全部置为o
 
         BIO_micro_precision, BIO_micro_recall, BIO_micro_f1, _ = precision_recall_fscore_support(final_pred, final_ans, average='micro')
 
-        raw_span_precision, raw_span_recall, raw_span_f1 = self.span_overlap_f1(BIO_pred, BIO_ans)
+        raw_span_precision, raw_span_recall, raw_span_f1 = self.span_overlap_f1(BIO_pred, BIO_ans) #直接计算
 
-        valid_ignore_span_precision, valid_ignore_span_recall, valid_ignore_span_f1 = self.span_overlap_f1(BIO_pred_valid_ignore, BIO_ans)
+        valid_ignore_span_precision, valid_ignore_span_recall, valid_ignore_span_f1 = self.span_overlap_f1(BIO_pred_valid_ignore, BIO_ans) #修正后计算
 
         BIO_pred_valid_ignore_positions = BasicModel.find_BIO_spans_positions(BIO_pred_valid_ignore)
         BIO_ans_positions = BasicModel.find_BIO_spans_positions(BIO_ans)
