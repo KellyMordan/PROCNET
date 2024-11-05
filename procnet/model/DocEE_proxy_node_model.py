@@ -292,7 +292,7 @@ class DocEEProxyNodeModel(DocEEBasicModel):
             # (1, seq_length, node_size)
             lm_last_hidden_states = self.lm_hidden_linear(lm_last_hidden_states)
             # (seq_length, node_size)
-            lm_hidden_state = lm_last_hidden_states.squeeze(0) #
+            lm_hidden_state = lm_last_hidden_states.squeeze(0) # 10.15到这里了
             lm_clss_times.append(lm_clss)
             lm_hidden_state_times.append(lm_hidden_state)
 
