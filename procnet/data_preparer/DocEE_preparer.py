@@ -46,10 +46,14 @@ class DocEEPreparer(BasicPreparer):
             i_index = self.seq_BIO_tag_to_index[cate + '-I']
             self.seq_bio_tag_index_to_cate_index[b_index] = cate_index
             self.seq_bio_tag_index_to_cate_index[i_index] = cate_index
-
+        '''
+        通过遍历所有文档，提取数据集中包含的事件类型和角色。
+        event_type_label_set_from_data 存储从数据中提取到的所有事件类型 
+        event_role_label_set_from_data 存储从数据中提取到的所有角色集合
+        '''
         event_type_label_set_from_data = set()
         event_role_label_set_from_data = set()
-        for docs in self.all_docs:
+        for docs in self.all_docs: #all_docs包含训练集、开发集和测试集中的所有文档，这些文档中包含了事件的具体信息。
             for doc in docs:
                 for event in doc.events:
                     for k, v in event.items():
@@ -57,17 +61,44 @@ class DocEEPreparer(BasicPreparer):
                             event_type_label_set_from_data.add(v) #5种事件类型
                         else:
                             event_role_label_set_from_data.add(k) # 22个非空事件field
+        '''
+        遍历事件模式 (SCHEMA)，提取出所有的事件类型和与其相关的角色集合。
+        self.event_type_label_set 存储事件模式中的所有事件类型，
+        self.event_role_label_set 存储所有角色。
+        '''
         for k, v in self.SCHEMA.items():
             self.event_type_label_set.add(k)
             [self.event_role_label_set.add(x) for x in v]
+        '''
+        检查从数据中提取到的事件类型和角色集合是否与事件模式中的一致。
+        如果不一致，则发出警告  
+        '''
         if self.event_type_label_set != event_type_label_set_from_data:
             logging.warning('event schema type and data not same with schema: {} and: data {}'.format(self.event_type_label_set, event_type_label_set_from_data))
         if self.event_role_label_set != event_role_label_set_from_data:
             logging.warning('event schema role and data not same with schema: {} and: data {}'.format(self.event_role_label_set, event_role_label_set_from_data))
+        '''
+        将事件角色标签集合转换为一个列表 event_role_index_to_relation，并添加一个 "Null" 标签，
+        用于表示不存在的关系。
+        event_role_index_to_relation 的形式为 ['Null'] + sorted(list(self.event_role_label_set))，
+        即将所有角色按字典序排序并在前面加上一个 "Null"，用于表示没有关系。
+        '''
         self.event_type_index_to_type = ['Null'] + sorted(list(self.event_type_label_set))
         self.event_type_type_to_index = {self.event_type_index_to_type[i]: i for i in range(len(self.event_type_index_to_type))}
         logging.debug('num event_type_index_to_type: {}, event_type_index_to_type: {}'.format(len(self.event_type_index_to_type), self.event_type_index_to_type))
+        '''
+        将事件角色标签集合转换为一个列表 event_role_index_to_relation，并添加一个 "Null" 标签，
+        用于表示不存在的关系。
+        event_role_index_to_relation 的形式为 ['Null'] + sorted(list(self.event_role_label_set))，
+        即将所有角色按字典序排序并在前面加上一个 "Null"，用于表示没有关系。
+        '''
         self.event_role_index_to_relation = ['Null'] + sorted(list(self.event_role_label_set))
+        '''
+        使用事件角色列表来创建 event_role_relation_to_index，
+        它是一个字典，键是事件角色标签，值是对应的索引：
+        event_role_relation_to_index 将每个事件角色映射到一个整数索引，
+        其中 "Null" 角色对应的索引为 0。
+        '''
         self.event_role_relation_to_index = {self.event_role_index_to_relation[i]: i for i in range(len(self.event_role_index_to_relation))}
         logging.debug('num event_role_index_to_relation: {}, event_role_index_to_relation: {}'.format(len(self.event_role_index_to_relation), self.event_role_index_to_relation))
 
