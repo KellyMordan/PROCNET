@@ -467,6 +467,14 @@ class DocEEProxyNodeModel(DocEEBasicModel):
         proxy_slot = gcn_node_vector[:num_all_proxy_slot] #代理节点的gcn卷积后的向量
 
         # --- event type logit ---
+
+        '''
+        过图卷积网络 (GCN) 后，得到每个代理节点的嵌入向量，这些嵌入向量用于预测事件类型。
+        proxy_slot_event_type_linear 是一个线性层，用于将每个代理节点的嵌入向量映射到事件类型的概率分布。
+        输出结果是一个形状为 (num_all_proxy_slot, num_event_type) 的张量，
+        每一行代表一个代理节点的事件类型预测值。
+        其中，每一列代表该代理节点对于某个具体事件类型的预测值，这些值是未归一化的概率，即 "logit"。
+        '''
         # (num_all_proxy_slot, num_event_type) 16,6  代理节点的事件类别
         event_type_logit = self.proxy_slot_event_type_linear(proxy_slot)
 
@@ -486,10 +494,34 @@ class DocEEProxyNodeModel(DocEEBasicModel):
                 span_state = node_vector[span_state_index] #节点的span_state
                 span_tensor[tensor_index, count] = span_state 
                 span_tensor_mask[tensor_index, count] = False
+        '''
+        对于每一个实体节点（跨度节点），代理节点的嵌入需要进行扩展，
+        使得每一个代理节点嵌入与每一个实体节点可以进行组合。
+        使用 unsqueeze 和 expand 将代理节点嵌入扩展到与实体节点匹配的形状，
+        得到的 proxy_slot_expand 的形状为 (span_num, num_all_proxy_slot, node_size)，
+        其中 span_num 是实体节点（跨度节点）的数量。
+        这样做是为了确保每个代理节点的嵌入都能与每个实体节点的嵌入进行结合，
+        方便后续计算代理节点与实体节点之间的关系。
+        '''
         # (span_num, num_all_proxy_slot, node_size)
         proxy_slot_expand = proxy_slot.unsqueeze(0).expand(span_num, num_all_proxy_slot, self.node_size)
+        '''
+        使用多头注意力 (self.proxy_span_attention) 来计算实体节点的嵌入，
+        其中代理节点作为查询 (query)，实体节点作为键 (key) 和值 (value)。
+        这样    可以通过注意力机制将实体节点的信息聚合到代理节点上，
+        得到的 span_tensor 的形状为 (span_num, num_all_proxy_slot, node_size)。
+        '''
         # (span_num, num_all_proxy_slot, node_size)
         span_tensor, _ = self.proxy_span_attention(query=proxy_slot_expand, key=span_tensor, value=span_tensor, key_padding_mask=span_tensor_mask)
+        '''
+        将扩展后的代理节点嵌入 (proxy_slot_expand) 与注意力机制后的实体节点嵌入 (span_tensor) 进行连接。
+        通过 torch.cat 操作，将它们在特征维度上拼接起来，
+        得到的 proxy_span_tensors 的形状为 (num_all_proxy_slot, span_num, node_size * 2)。
+        这个张量包含了代理节点与实体节点的联合特征，用于进一步的关系预测。
+        这里 transpose(0, 1) 是为了将第一个和第二个维度进行互换，
+        使得最终的 proxy_span_tensors 的形状变为 (num_all_proxy_slot, span_num, node_size * 2)，
+        方便后续的线性层计算。
+        '''
         # (num_all_proxy_slot, span_num, node_size*2)
         proxy_span_tensor = torch.cat([proxy_slot_expand, span_tensor], dim=2).transpose(0, 1)
         # (num_all_proxy_slot, span_num, num_event_relation)
@@ -497,7 +529,9 @@ class DocEEProxyNodeModel(DocEEBasicModel):
 
         # --- event probability result. This is the final for inference ---
         # (num_all_proxy_slot, num_event_type)
-        event_type_prob = F.softmax(event_type_logit, dim=1)
+        '''通过 softmax 操作，将 event_type_logit 归一化为概率，
+        使得每个代理节点在所有事件类型上的预测概率之和为 1。'''
+        event_type_prob = F.softmax(event_type_logit, dim=1) #
         # (num_all_proxy_slot, span_num, num_event_relation)
         event_relation_prob = F.softmax(proxy_span_relation_logit, dim=2)
 
@@ -508,8 +542,25 @@ class DocEEProxyNodeModel(DocEEBasicModel):
         event_relation_prob = event_relation_prob.detach().cpu().numpy().tolist()
 
         predict_events = [] #预测事件记录列表
+        '''
+        使用 for 循环遍历所有的代理节点，num_all_proxy_slot 是代理节点的数量。
+        j 是代理节点的索引，对于每个代理节点，都要构建一个完整的事件预测结果。
+        变量 predict_event 用于存储当前代理节点的预测事件，它首先被初始化为一个包含事件类型的字典，
+        其中 'EventType' 对应的值是 event_type_prob[j]。
+        event_type_prob[j] 是代理节点 j 对所有可能的事件类型进行 softmax 后的概率分布，
+        这表示该代理节点属于不同事件类型的概率。
+        '''
         for j in range(num_all_proxy_slot):
             predict_event = {'EventType': event_type_prob[j]}
+            '''
+            使用 for 循环遍历所有的实体节点，span_num 是跨度节点的数量。
+            span_tensor_index_to_span[k] 获取第 k 个实体节点的标识符（通常是文本的 token 字典序ID 元组）。
+            event_relation_prob[j][k] 是代理节点 j 与实体节点 k 之间的关系概率分布，这表示当前代理节点和实体节点在所有可能关系上的概率分布。
+            predict_event[span_tensor_index_to_span[k]] = event_relation_prob[j][k] 将代理节点与实体节点之间的关系预测结果添加到 predict_event 中。
+            这里，span_tensor_index_to_span[k] 作为字典的键，event_relation_prob[j][k] 作为值。
+            这一步操作将实体节点与代理节点之间的关系预测（所有关系的概率分布）添加到预测事件中。
+            实际上就是span对应23中角色的概率分布
+            '''
             for k in range(span_num):
                 predict_event[span_tensor_index_to_span[k]] = event_relation_prob[j][k]
             predict_events.append(predict_event)
