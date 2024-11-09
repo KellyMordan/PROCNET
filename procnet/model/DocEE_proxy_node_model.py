@@ -210,6 +210,9 @@ class DocEEProxyNodeModel(DocEEBasicModel):
             nn.Dropout(self.dropout_ratio),
             nn.Linear(self.node_size // 4, self.num_event_relation)
         )
+        '''self.cls_total_event_num_linear 是一个线性层，
+        用于将聚合后的向量转换为事件数量的预测值 total_event_num_logit，
+        其形状为 (1)，表示对整个文本的事件数量的估计。'''
         self.cls_total_event_num_linear = nn.Sequential(
             nn.Dropout(self.dropout_ratio),
             nn.Linear(self.node_size, self.node_size // 4),
@@ -243,35 +246,47 @@ class DocEEProxyNodeModel(DocEEBasicModel):
 
         # --- entity record init ---
         bio_probs = []
-        lm_clss_times = [] #  分类任务: 在后续阶段使用 lm_clss 进行分类决策。
+        lm_clss_times = [] #  分类任务: 在后续阶段使用 lm_clss 进行分类决策。 包含每个时间步（句子）的 CLS 向量嵌入拼接上句子的位置信息，这些嵌入是由语言模型（如 BERT）得到的。
         lm_hidden_state_times = [] #时序分析: 使用 lm_hidden_state 进行进一步的时序数据分析或输入到其他模型中
         position_times = [] #用于 记录每个时间步的实体位置信息，用于后续的事件关系预测。
         loss_bio = torch.FloatTensor([0]).to(device)
         # --- sequence labeling --- 进行命名实体识别（NER），使用 BERT 模型的最后一个隐层状态来预测 BERT 特征对应的标签（BIO）。
+        '''这里 sentence_num 表示输入的句子数量，模型需要对每个句子进行 BIO 序列标注。
+        每次循环处理一个句子。'''
         for time_step in range(sentence_num):
-            # (1, seq_length, )
+            # (1, seq_length, )inputs_ids 是输入 token IDs，input_ids 表示当前时间步（句子）的 token ID。
             input_ids = inputs_ids[time_step].unsqueeze(0)
-            # (1, seq_length, )
+            # (1, seq_length, ) bio_ids 是真实的 BIO 标签，在训练阶段用于计算损失，在评估阶段为 None。
             bio_ids = bios_ids[time_step].unsqueeze(0) if bios_ids is not None else None
-            # cpu [101, 102, 103]
+            # cpu [101, 102, 103] 是当前句子的 token ID 列表，以便后续操作。
             input_id_int = input_ids_int[time_step]
             # --- all sentence to LM for BIO ---
             lm_res: BaseModelOutputWithPoolingAndCrossAttentions = self.language_model(input_ids=input_ids) #bert做embedding
             # (1, seq_length, lm_size)
             lm_last_hidden_states = lm_res.last_hidden_state #inputs经过bert嵌入后的最后一个hidden_state
-            # (1, seq_length, bio_tags_size)
-            lm_logit = self.lm_bio_linear(lm_last_hidden_states) #通过一个线性层（lm_bio_linear）将最后的隐层状态转换为 BIO 标签的 logit（未归一化的预测值）。
-            if bio_ids is None: # 判断是否进行评估
+            '''
+            通过一个线性层（lm_bio_linear）
+            将最后的隐层状态转换为 BIO 标签的 logit（未归一化的预测值）。
+            (1, seq_length, bio_tags_size)
+            bio_tags_size 表示所有可能的 BIO 标签数量。'''
+            lm_logit = self.lm_bio_linear(lm_last_hidden_states) 
+            if bio_ids is None: # 评估阶段
                 one_loss_bio = torch.FloatTensor([0]).to(device) #如果是，表示当前是在评估（evaluation）阶段，这时损失（loss）设为 0。
-            else: #计算损失。使用交叉熵损失函数 (ce_none_reduction_loss_fn) 来计算原始的损失值 raw_loss_bio。
+            else:  # 训练阶段  
+                '''计算损失。使用交叉熵损失函数 (ce_none_reduction_loss_fn) 来计算原始的损失值 raw_loss_bio。'''
                 raw_loss_bio = self.ce_none_reduction_loss_fn(lm_logit.view(-1, self.num_BIO_tag), bio_ids.view(-1, )) #计算原始损失值 raw_loss_bio。
+                '''
+                将 BIO 标签分为 O 标签（非实体）和非 O 标签（实体），分别计算它们的损失。
+                使用正负样本比率（pos_bio_ratio_total 和 neg_bio_ratio_total）对不同标签的损失进行加权，帮助模型更好地学习稀有的非 O 样本。
+                将损失缩放为原来的 0.01，以减小梯度的幅度。
+                '''
                 bio_is_o = bio_ids.squeeze(0) == self.null_bio_index #找到标签为O（非实体）和非O的位置。
                 bio_not_o = bio_ids.squeeze(0) != self.null_bio_index
                 loss_o = torch.sum(raw_loss_bio * bio_is_o) #分别计算O标签和非O标签的损失值 loss_o 和 loss_bi
                 loss_bi = torch.sum(raw_loss_bio * bio_not_o)
                 one_loss_bio = loss_o * self.pos_bio_ratio_total + loss_bi * self.neg_bio_ratio_total #结合正负样本比例调整损失值，并乘以0.01进行缩放。 帮助模型更好地学习那些稀有但重要的样本（比如负样本）。
                 one_loss_bio = one_loss_bio * 0.01
-            loss_bio += one_loss_bio
+            loss_bio += one_loss_bio #loss_bio 是累计的 BIO 损失，用于整个文本的 BIO 序列标注。
 
             # (1, seq_length, bio_tags_size) 1,425,49   预测的bio
             bio_prob = F.softmax(lm_logit, dim=2) #得到bio概率分布
@@ -279,20 +294,27 @@ class DocEEProxyNodeModel(DocEEBasicModel):
             bio_result = bio_prob.squeeze(0).detach().cpu().numpy().tolist()
             # cpu positions. [[[start, end], [start, end]], ]
             bio_probs.append(bio_prob.squeeze(0).detach().cpu())
+            '''
+            self.get_bio_positions 是一个辅助函数，
+            用于根据预测的 BIO 标签（bio_result）来确定每个实体的起始和结束位置 (pred_position)。
+            这些位置表示在文本中预测到的实体范围。
+            '''
             pred_position = self.get_bio_positions(bio_res=bio_result, input_id_int=input_id_int, input_prob=True, binary_mode=True, ignore_padding_token=False) #预测的span的下标索引
 
             # (1, lm_size )
             lm_clsss = lm_last_hidden_states[:, 0] #seq的第一个 最后的隐层状态中获取第一个 token（通常是 [CLS] token 的表示），形状为 (1, lm_size)，通常用于分类任务。
             # (1, lm_size + 1)
-            lm_clsss = torch.cat([lm_clsss, torch.ones((1, 1), dtype=torch.float, device=device) * time_step], dim=1)
+            lm_clsss = torch.cat([lm_clsss, torch.ones((1, 1), dtype=torch.float, device=device) * time_step], dim=1) #将时间步信息附加到该嵌入向量后面，得到一个形状为 (1, lm_size + 1) 的张量。
             # (1, node_size)
+            '''使用 lm_cls_hidden_linear 将嵌入转换为图节点的大小 (node_size)，用于后续的事件预测。''' 
             lm_clss = self.lm_cls_hidden_linear(lm_clsss)
             # (1, seq_length, lm_size + 1) 创建一个新的张量，其形状与 lm_last_hidden_states 兼容，并填充一个标量值。将这个新张量与原始隐藏状态连接，扩展其特征维度。最终得到的结果 是一个包含了额外时间步信息的隐藏状态张量。
             lm_last_hidden_states = torch.cat([lm_last_hidden_states, torch.ones((1, lm_last_hidden_states.size(1), 1), dtype=torch.float, device=device) * time_step], dim=2)
             # (1, seq_length, node_size)
             lm_last_hidden_states = self.lm_hidden_linear(lm_last_hidden_states)
+
             # (seq_length, node_size)
-            lm_hidden_state = lm_last_hidden_states.squeeze(0) #
+            lm_hidden_state = lm_last_hidden_states.squeeze(0) 
             lm_clss_times.append(lm_clss)
             lm_hidden_state_times.append(lm_hidden_state)
 
@@ -317,23 +339,36 @@ class DocEEProxyNodeModel(DocEEBasicModel):
 
         # --- event num predict ---
         # (cls_num, node_size)
-        cls_for_event_num = torch.cat(lm_clss_times, dim=0)
+        '''#获取所有时间步(句子)的分类嵌入，对这些嵌入进行平均池化，得到一个聚合表示'''
+        cls_for_event_num = torch.cat(lm_clss_times, dim=0)  #lm_clss_times 是一个列表，包含每个时间步（句子）的 CLS 向量嵌入
         # (node_size)
         cls_for_event_num = torch.mean(cls_for_event_num, dim=0, keepdim=False)
+        '''total_event_num_logit 是模型对事件数量的预测值。
+        它是通过聚合所有句子的分类嵌入 (lm_clss) 来获得的。
+        首先，分类嵌入通过平均池化来得到一个总的表示，
+        然后通过一个线性层进行预测，得到事件数量的预测值。
+        '''
         total_event_num_logit = self.cls_total_event_num_linear(cls_for_event_num) #预测事件总数概率分布
         total_event_num_pred = total_event_num_logit.detach().cpu().numpy().tolist()[0]
-        total_event_num_pred = int(total_event_num_pred + 0.99999) #TODO：这里为什么加0.99999
+        '''通过加上 0.99999 并取整，确保对于大多数情况，浮点数向上取整，而不是直接取整（这有助于避免系统性地低估事件数量）。'''
+        total_event_num_pred = int(total_event_num_pred + 0.99999) 
         event_num_pred_result = total_event_num_pred
         total_event_num_index = self.num_proxy_slot
         num_all_proxy_slot = total_event_num_index
         # --- event num pred loss ---
-        total_event_num = len(events_labels)
+        total_event_num = len(events_labels) # 是数据集中实际存在的事件数量，用于与模型预测的事件数量进行比较。
         total_event_num_label = torch.FloatTensor([total_event_num]).to(device)
         total_event_num_loss = self.mse_loss_fn(total_event_num_logit.view(-1), total_event_num_label.view(-1)) #事件个数损失函数
 
         # --- init the graph  构造图 ---
+        '''
+        node_span_to_indexes 是一个字典结构，用于存储每个跨度（实体节点）在图中对应的所有节点索引。
+        字典的键是跨度的标识符（例如 token ID 的元组），
+        值是一个列表，包含了该跨度对应的所有节点索引。
+        同一个跨度可能在不同的句子中多次出现，因此它可能对应多个节点索引。
+        '''
         # {(1, 2, 6, 9): [1, 5, 7], (5, 1, 6, 7): [2, 6, 10]}
-        node_span_to_indexes = {} #span_node的index对应的input_ids 
+        node_span_to_indexes = {} #span_node的index对应的input_ids  
         # {1: (1, 2, 6, 9), 2: (5, 1, 6, 7)}
         node_indexes_to_span = {}
         # [1, 3, 5, 7]
@@ -487,9 +522,14 @@ class DocEEProxyNodeModel(DocEEBasicModel):
         span_tensor = torch.zeros((span_num, max_individual_span_num, self.node_size), dtype=torch.float, device=device)
         # (span_num, individual_span_num) mask矩阵
         span_tensor_mask = torch.ones((span_num, max_individual_span_num), dtype=torch.bool, device=device)
+        '''span_tensor_span_to_index 也是一个字典，
+        其键是跨度的标识符（与 node_span_to_indexes 的键相同），
+        而值是一个整数，表示该跨度在 span_tensor 和 span_tensor_mask 中的行索引,第几个span。'''
         for span, tensor_index in span_tensor_span_to_index.items():
             count = -1
-            for span_state_index in node_span_to_indexes[span]:
+            '''node_span_to_indexes 主要用于跟踪每个跨度（实体节点）在图中对应的节点索引。
+            '''
+            for span_state_index in node_span_to_indexes[span]: 
                 count += 1
                 span_state = node_vector[span_state_index] #节点的span_state
                 span_tensor[tensor_index, count] = span_state 
@@ -524,7 +564,7 @@ class DocEEProxyNodeModel(DocEEBasicModel):
         '''
         # (num_all_proxy_slot, span_num, node_size*2)
         proxy_span_tensor = torch.cat([proxy_slot_expand, span_tensor], dim=2).transpose(0, 1)
-        # (num_all_proxy_slot, span_num, num_event_relation)
+        # (num_all_proxy_slot, span_num, num_event_relation 23)
         proxy_span_relation_logit = self.span_proxy_slot_relation_linear(proxy_span_tensor) #P_(a_i,k) 实体在与代理节点编码的事件相关的参数类型的概率分布
 
         # --- event probability result. This is the final for inference ---
@@ -603,9 +643,11 @@ class DocEEProxyNodeModel(DocEEBasicModel):
         events_label_type_to_index: Dict[str, list] = {x: [] for x in self.event_type_index_to_type_no_null}
         events_type_labels_tensors_list = []
         events_relation_labels_tensors_list = [] # 当前span_index对应的role_Index
+
+        '''events_horizontal_role_labels_tensor 是一个张量，存储的是每个事件中各角色的实体指代情况。'''
         events_horizontal_role_labels_tensors_list = [] #当前role——index对应的span——index
         event_index = -1
-        for event_label in events_label: #真实事件记录
+        for event_label in events_label: ## 遍历每个事件的标注信息
             event_type_label_tensor = torch.LongTensor([event_label['EventType']]) #事件类型
             event_relation_label_tensor = torch.ones((span_num,), dtype=torch.long) * self.null_event_relation_index  #初始化长度为span_num，初始化元素为null对应的事件类型标签
             events_horizontal_role_label_tensor = torch.ones((self.num_event_relation,), dtype=torch.long) * -100  #初始化长度为role，初始值为-100
@@ -616,11 +658,15 @@ class DocEEProxyNodeModel(DocEEBasicModel):
                     # this should only happen when use not-gold bio tag
                     continue
                 event_relation_label_tensor[span_tensor_span_to_index[k]] = v
+                '''对于存在角色 (k) 的情况，将角色的索引赋值为对应的实体索引，表示该角色在当前事件中指代的实体。'''
                 events_horizontal_role_label_tensor[v] = span_tensor_span_to_index[k]
             event_index += 1
             events_label_type_to_index[self.event_type_index_to_type[event_label['EventType']]].append(event_index)
             events_type_labels_tensors_list.append(event_type_label_tensor.to(device))
             events_relation_labels_tensors_list.append(event_relation_label_tensor.to(device))
+            '''
+            将所有事件的角色标签张量放到一起：
+            '''
             events_horizontal_role_labels_tensors_list.append(events_horizontal_role_label_tensor.to(device))
         event_num = len(events_type_labels_tensors_list)
 
@@ -628,31 +674,64 @@ class DocEEProxyNodeModel(DocEEBasicModel):
         # (event_num) 真实事件类型列表
         events_type_labels_tensor = torch.cat(events_type_labels_tensors_list, dim=0)
         # (event_num, span_num)
-        events_relation_labels_tensor = torch.cat([x.unsqueeze(0) for x in events_relation_labels_tensors_list], dim=0)
+        events_relation_labels_tensor = torch.cat([x.unsqueeze(0) for x in events_relation_labels_tensors_list], dim=0)        
+       
+        '''这样就得到了 events_horizontal_role_labels_tensor，
+        它是一个形状为 (event_num, num_event_relation) 的张量。
+    event_num 表示事件的数量，num_event_relation 表示所有可能的角色类型数量，包括 "Null" 类型。'''
         # (event_num, num_event_relation) 代理节点和span之间的关系
         events_horizontal_role_labels_tensor = torch.cat([x.unsqueeze(0) for x in events_horizontal_role_labels_tensors_list], dim=0)
-
-        # (event_num, num_all_proxy_slot, num_event_type) 预测事件类型概率分布
+       
+        '''event_num 是真实事件的数量，num_all_proxy_slot 是代理节点的数量，num_event_type 是所有事件类型的数量。'''
+        # (event_num, num_all_proxy_slot, num_event_type 6) 预测事件类型概率分布
         event_type_logit_expand = event_type_logit.unsqueeze(0).expand(event_num, num_all_proxy_slot, self.num_event_type)
         # (event_num, num_all_proxy_slot) 真实事件类型扩展，为了后续计算交叉熵
         events_type_labels_expand = events_type_labels_tensor.unsqueeze(1).expand(event_num, num_all_proxy_slot)
+       
         # (event_num, num_all_proxy_slot, span_num, num_event_relation) 代理节点和span之间的关系概率分布
         event_relation_logit_expand = proxy_span_relation_logit.unsqueeze(0).expand(event_num, num_all_proxy_slot, span_num, self.num_event_relation)
         # (event_num, num_all_proxy_slot, span_num) 每个事件（包括其代理节点和相关的跨度之间）之间的关系标签。 关注的是事件与事件之间的关系，主要用于理解事件之间的依赖或交互。
         events_relation_labels_expand = events_relation_labels_tensor.unsqueeze(1).expand(event_num, num_all_proxy_slot, span_num)
+        
+        '''event_relation_logit_expand 是模型预测的代理节点与实体之间的角色关系，形状为 (event_num, num_all_proxy_slot, span_num, num_event_relation)。
+        通过 transpose(2, 3) 操作，我们将维度进行交换，得到 event_relation_logit_expand_T，
+        其形状为 (event_num, num_all_proxy_slot, num_event_relation, span_num)。
+        这样可以从角色的角度来看与实体之间的关系。'''
         # (event_num, num_all_proxy_slot, num_event_relation, span_num) 事件、span、角色预测关系概率分布
         event_relation_logit_expand_T = event_relation_logit_expand.transpose(2, 3)
-        # (event_num, num_all_proxy_slot, num_event_relation) 对于某个代理槽，它包含了与该槽相关的所有事件类型的角色标签。 关注的是事件内的角色分配，即每个事件如何与其代理槽和角色相互作用。
+      
+        '''通过 transpose(2, 3) 操作，我们将维度进行交换，
+        得到 event_relation_logit_expand_T，其形状为 (event_num, num_all_proxy_slot, num_event_relation, span_num)。
+        这样可以从角色的角度来看与实体之间的关系。'''
+        # (event_num, num_all_proxy_slot, num_event_relation) 真实的角色标签，对于某个代理槽，它包含了与该槽相关的所有事件类型的角色标签。 关注的是事件内的角色分配，即每个事件如何与其代理槽和角色相互作用。
         events_horizontal_role_labels_expand = events_horizontal_role_labels_tensor.unsqueeze(1).expand(event_num, num_all_proxy_slot, self.num_event_relation)
 
+        '''使用交叉熵损失函数 (ce_none_reduction_loss_fn) 计算每个代理节点的事件类型损失，
+        将输出 reshaped 成二维的 (event_num, num_all_proxy_slot)，即每个事件对每个代理节点的损失值。'''
         # (event_num, num_all_proxy_slot) 事件类型的交叉熵损失
         event_type_losses = self.ce_none_reduction_loss_fn(event_type_logit_expand.reshape(event_num * num_all_proxy_slot, self.num_event_type), events_type_labels_expand.reshape(event_num * num_all_proxy_slot)).view(event_num, num_all_proxy_slot)
-        # (event_num, num_all_proxy_slot, span_num) 事件间关系的损失
+
+        # (event_num, num_all_proxy_slot, span_num) 它表示每个代理节点与每个实体之间的角色关系损失。
         event_relations_losses = self.ce_none_reduction_loss_fn(event_relation_logit_expand.reshape(event_num * num_all_proxy_slot * span_num, self.num_event_relation), events_relation_labels_expand.reshape(event_num * num_all_proxy_slot * span_num)).view(event_num, num_all_proxy_slot, span_num)
+
         # (event_num, num_all_proxy_slot)
         event_relation_losses = torch.mean(event_relations_losses, dim=2, keepdim=False)
+                       
+        '''
+        真实的角色标签，经过 .reshape(event_num * num_all_proxy_slot * self.num_event_relation) 变形成适合损失计算的形状。
+        self.ce_none_reduction_loss_fn 是交叉熵损失函数，
+        用于计算每个代理节点与事件内部每个角色之间的损失。
+        计算得到的损失被重新变形为 (event_num, num_all_proxy_slot, num_event_relation)，
+        即每个事件、每个代理节点、每个角色的损失。
+        '''
         # (event_num, num_all_proxy_slot, num_event_relation) #在某个类型的slot下事件角色的交叉熵损失
         event_horizontal_role_losses = self.ce_none_reduction_loss_fn(event_relation_logit_expand_T.reshape(event_num * num_all_proxy_slot * self.num_event_relation, span_num), events_horizontal_role_labels_expand.reshape(event_num * num_all_proxy_slot * self.num_event_relation)).view(event_num, num_all_proxy_slot, self.num_event_relation)
+        
+        '''
+        通过对维度 dim=2 进行平均计算，得到 event_relation_losses，
+        形状为 (event_num, num_all_proxy_slot)，
+        表示每个代理节点在所有实体上的平均角色关系损失。
+        '''
         # (event_num, num_all_proxy_slot)
         event_horizontal_role_losses = torch.mean(event_horizontal_role_losses, dim=2, keepdim=False)
 
@@ -720,6 +799,8 @@ class DocEEProxyNodeModel(DocEEBasicModel):
         # (max(event_num,proxy_slot_num), proxy_slot_num)
         losses_matrix_for_ordering = event_loss_matrix.detach().cpu().numpy()
         order_res_dict, min_order_loss = self.event_ordering(losses_matrix_for_ordering)
+        '''order_dict 是一个字典，表示匹配的关系，例如 {event_id: proxy_slot_id}，
+        其中 event_id 表示真实事件的索引，proxy_slot_id 表示与之匹配的代理节点索引。'''
         # {event_id: proxy_slot_id}
         order_dict = {k: v for k, v in order_res_dict.items() if k < event_num} #保留最优匹配的前event_num个事件，也就是真实事件的个数
 
@@ -728,10 +809,11 @@ class DocEEProxyNodeModel(DocEEBasicModel):
         event_positive_relation_loss = 0
         positive_total_num = 0
         null_total_num = num_all_proxy_slot
-        for k, v in order_dict.items(): #k是max(event_num,proxy_slot_num)的序号，v是代表对应的代理槽ID。
+        for k, v in order_dict.items():  # k 是真实事件索引，v 是匹配的代理节点索引
+            '''累加每个真实事件与其最优匹配的代理节点的事件类型损失。'''
             event_positive_type_loss += event_type_losses[k, v]
             event_positive_relation_loss += event_relation_losses[k, v] + event_horizontal_role_losses[k, v]
-            positive_total_num += 1
+            positive_total_num += 1 #匹配到的真实事件数量。
             null_event_type_losses[v] = 0 # 清除和真实事件匹配的代理事件
             null_event_relation_losses[v] = 0
             null_total_num -= 1
